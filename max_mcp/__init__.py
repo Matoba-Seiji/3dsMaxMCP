@@ -7,8 +7,12 @@
 灯光设置、动画关键帧等操作。
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
-from .server import main
+def main():
+    # The in-Max bridge imports max_mcp too. Keep external MCP dependencies
+    # out of Autodesk's embedded Python until the stdio entry point is used.
+    from .server import main as run_server
+    return run_server()
 
 __all__ = ["main", "__version__"]

@@ -9,8 +9,11 @@
 # Import built-in modules
 import socket
 import json
-import struct
 from enum import Enum
+
+from max_mcp.connector.protocol import (
+    HOST, PORT, connect_to_max, read_frame, write_frame,
+)
 
 # Import third-party modules
 
@@ -24,7 +27,8 @@ logger = LogManager.get_logger('3dsMaxMCPServer', __file__, log_file)
 # ============================================================
 # 客户端（MCP Server）与 3ds Max 内的 Socket Server 通过 TCP 通信。
 #
-# 发送协议:
+# 连接后先验证服务端身份，再发送客户端身份标记。
+# 随后的请求格式为:
 #   [4字节 大端序 uint32: 消息体长度] + [UTF-8编码的Python脚本]
 #
 # 接收协议:
@@ -34,67 +38,7 @@ logger = LogManager.get_logger('3dsMaxMCPServer', __file__, log_file)
 # 参见 max_server_listener.py
 # ============================================================
 
-HEADER_SIZE = 4  # 消息头长度（4字节，存放消息体长度）
-DEFAULT_RECV_BUFSIZE = 4096  # 默认接收缓冲区大小
-SOCKET_TIMEOUT = 60  # Socket 超时时间（秒）
-
-
-def _pack_message(data: str) -> bytes:
-    """将字符串消息打包为带长度头的二进制数据。
-
-    协议格式: [4字节大端序长度头] + [UTF-8编码的消息体]
-
-    Args:
-        data: 要发送的字符串消息
-
-    Returns:
-        打包后的二进制数据
-    """
-    encoded = data.encode('utf-8')
-    header = struct.pack('>I', len(encoded))
-    return header + encoded
-
-
-def _recv_all(sock: socket.socket) -> str:
-    """从 Socket 接收完整的带长度头的消息。
-
-    先读取4字节头获取消息体长度，再读取完整消息体。
-
-    Args:
-        sock: 已连接的 Socket 对象
-
-    Returns:
-        解码后的字符串消息
-
-    Raises:
-        ConnectionError: 连接被关闭或数据不完整
-    """
-    # 读取消息头（4字节）
-    header_data = b''
-    while len(header_data) < HEADER_SIZE:
-        chunk = sock.recv(HEADER_SIZE - len(header_data))
-        if not chunk:
-            raise ConnectionError("3ds Max 端连接已关闭，未能读取消息头。")
-        header_data += chunk
-
-    # 解析消息体长度
-    msg_length = struct.unpack('>I', header_data)[0]
-    if msg_length == 0:
-        return ''
-
-    # 读取完整消息体
-    body_data = b''
-    while len(body_data) < msg_length:
-        remaining = msg_length - len(body_data)
-        chunk = sock.recv(min(remaining, DEFAULT_RECV_BUFSIZE))
-        if not chunk:
-            raise ConnectionError(
-                f"3ds Max 端连接已关闭，消息体不完整。"
-                f"期望 {msg_length} 字节，实际收到 {len(body_data)} 字节。"
-            )
-        body_data += chunk
-
-    return body_data.decode('utf-8')
+SOCKET_TIMEOUT = 130  # Includes the listener execution timeout.
 
 
 def _update_script_to_capture_stdout(python_script: str) -> str:
@@ -127,10 +71,10 @@ class MaxConnection(object):
 
     Attributes:
         _host: 连接地址，默认 127.0.0.1
-        _port: 连接端口，默认 50007
+        _port: 连接端口，默认 50012
     """
 
-    def __init__(self, host: str = '127.0.0.1', port: int = 50007):
+    def __init__(self, host: str = HOST, port: int = PORT):
         super(MaxConnection, self).__init__()
         self._host = host
         self._port = port
@@ -140,8 +84,8 @@ class MaxConnection(object):
 
         使用带长度头的协议确保数据完整传输：
         1. 建立 TCP 连接
-        2. 发送 [长度头 + Python脚本]
-        3. 接收 [长度头 + 执行结果]
+        2. 校验 3dsMaxMCP 身份标记
+        3. 发送 [长度头 + Python脚本]，接收执行结果
         4. 关闭连接
 
         Args:
@@ -155,20 +99,18 @@ class MaxConnection(object):
             ConnectionError: 通信过程中连接断开
             socket.timeout: 等待响应超时
         """
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.settimeout(SOCKET_TIMEOUT)
-
+        client = None
         try:
-            client.connect((self._host, self._port))
+            # The Max listener identifies itself before we send executable code.
+            # A Maya process occupying the port receives no Python payload.
+            client = connect_to_max(self._host, self._port)
+            client.settimeout(SOCKET_TIMEOUT)
             logger.debug(f"已连接到 3ds Max ({self._host}:{self._port})")
 
-            # 发送 Python 脚本（带长度头）
-            message = _pack_message(python_script)
-            client.sendall(message)
+            write_frame(client, python_script)
             logger.debug(f"已发送脚本，长度: {len(python_script)} 字符")
 
-            # 接收执行结果（带长度头）
-            result = _recv_all(client)
+            result = read_frame(client)
             logger.debug(f"收到结果，长度: {len(result)} 字符")
 
             return result
@@ -182,16 +124,21 @@ class MaxConnection(object):
             raise ConnectionRefusedError(error_msg)
 
         except socket.timeout:
-            error_msg = f"等待 3ds Max 响应超时（{SOCKET_TIMEOUT}秒）。脚本可能执行时间过长。"
+            if client is None:
+                error_msg = (f"{self._host}:{self._port} 未返回 3dsMaxMCP 身份标记；"
+                             "端口可能属于其他程序，Python 脚本未发送。")
+            else:
+                error_msg = f"等待 3ds Max 执行结果超时（{SOCKET_TIMEOUT}秒）。"
             logger.error(error_msg)
-            raise
+            raise TimeoutError(error_msg)
 
         except Exception as e:
             logger.error(f"与 3ds Max 通信出错: {e}")
             raise
 
         finally:
-            client.close()
+            if client is not None:
+                client.close()
 
     def run_python_script(self, python_script: str, *, returns: ScriptReturn = ScriptReturn.JSON):
         """执行 Python 脚本并按指定返回类型处理结果。
@@ -222,13 +169,6 @@ class MaxConnection(object):
         # 清理结果字符串中的多余字符
         if result:
             result = result.strip()
-
-        # 如果直接执行没有返回结果，尝试读取 _mcp_max_results 变量
-        if returns != ScriptReturn.NONE and (not result or result in ('', 'None', '\n')):
-            logger.debug("首次结果为空，尝试读取 _mcp_max_results 变量")
-            result = self._send_python_command("_mcp_max_results")
-            if result:
-                result = result.strip()
 
         # 按返回类型解析结果
         if returns != ScriptReturn.NONE and result:

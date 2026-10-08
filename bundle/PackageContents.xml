@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0" AutodeskProduct="3ds Max"
+                    ProductType="Application" Name="3dsMaxMCP"
+                    AppVersion="0.2.0"
+                    ProductCode="{D7130607-7697-49B3-9968-04EE61613910}"
+                    UpgradeCode="{7A7CB078-0ADF-46EF-BE8D-A27329D32E79}">
+  <CompanyDetails />
+  <Components Description="post-start-up scripts parts">
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2023" SeriesMax="2023" />
+    <ComponentEntry AppName="3dsMaxMCP2023" Version="0.2.0"
+                    ModuleName="./Contents/scripts/menu_2023.ms" />
+  </Components>
+  <Components Description="pre-start-up scripts parts">
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2025" SeriesMax="2025" />
+    <ComponentEntry AppName="3dsMaxMCP2025" Version="0.2.0"
+                    ModuleName="./Contents/scripts/menu_2025.ms" />
+  </Components>
+</ApplicationPackage>

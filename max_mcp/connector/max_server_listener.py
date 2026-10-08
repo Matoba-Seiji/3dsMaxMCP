@@ -5,7 +5,7 @@
 此脚本需要在 3ds Max 内部运行（通过 MAXScript 的 python.ExecuteFile 或
 Scripting > Run Script 菜单加载）。
 
-启动后会在后台监听 TCP 端口（默认 50007），接收来自 MCP Server 的 Python 脚本。
+启动后会在后台监听 TCP 端口（默认 50012），接收来自 MCP Server 的 Python 脚本。
 脚本通过队列调度到 3ds Max **主线程**执行（保证 pymxs 可用），执行完成后将结果返回。
 
 架构:
@@ -34,19 +34,21 @@ Scripting > Run Script 菜单加载）。
 """
 
 import socket
-import struct
 import threading
 import traceback
 import json
 import queue
 
+from max_mcp.connector.protocol import (
+    CLIENT_HELLO, HANDSHAKE_TIMEOUT, HOST as DEFAULT_HOST,
+    PORT as DEFAULT_PORT, SERVER_HELLO, read_frame, recv_exact, write_frame,
+)
+
 # ============================================================
 # 配置
 # ============================================================
-HOST = '127.0.0.1'
-PORT = 50007
-HEADER_SIZE = 4
-RECV_BUFSIZE = 4096
+HOST = DEFAULT_HOST
+PORT = DEFAULT_PORT
 TIMER_INTERVAL_MS = 50  # 主线程轮询间隔(毫秒)
 TASK_TIMEOUT = 120       # 等待主线程执行结果的超时时间(秒)
 
@@ -71,51 +73,6 @@ _exec_globals = {}
 # ============================================================
 # 通信协议
 # ============================================================
-def _recv_all(conn: socket.socket) -> str:
-    """接收完整的带长度头的消息。
-
-    Args:
-        conn: 已连接的客户端 Socket
-
-    Returns:
-        解码后的消息字符串
-    """
-    header_data = b''
-    while len(header_data) < HEADER_SIZE:
-        chunk = conn.recv(HEADER_SIZE - len(header_data))
-        if not chunk:
-            raise ConnectionError("客户端连接已关闭")
-        header_data += chunk
-
-    msg_length = struct.unpack('>I', header_data)[0]
-    if msg_length == 0:
-        return ''
-
-    body_data = b''
-    while len(body_data) < msg_length:
-        remaining = msg_length - len(body_data)
-        chunk = conn.recv(min(remaining, RECV_BUFSIZE))
-        if not chunk:
-            raise ConnectionError("客户端连接已关闭，消息体不完整")
-        body_data += chunk
-
-    return body_data.decode('utf-8')
-
-
-def _pack_message(data: str) -> bytes:
-    """将字符串消息打包为带长度头的二进制数据。
-
-    Args:
-        data: 要发送的字符串
-
-    Returns:
-        [4字节长度头] + [UTF-8编码的消息体]
-    """
-    encoded = data.encode('utf-8')
-    header = struct.pack('>I', len(encoded))
-    return header + encoded
-
-
 # ============================================================
 # 视口刷新
 # ============================================================
@@ -137,7 +94,10 @@ def _force_refresh_viewport():
 
     try:
         # 2. 处理 Qt 事件队列，确保 UI 控件也刷新
-        from PySide2.QtWidgets import QApplication
+        try:
+            from PySide6.QtWidgets import QApplication
+        except ImportError:
+            from PySide2.QtWidgets import QApplication
         app = QApplication.instance()
         if app:
             app.processEvents()
@@ -235,8 +195,10 @@ def _start_main_thread_timer():
         from pymxs import runtime as rt
 
         # 使用 Qt 的 QTimer 实现主线程定时回调
-        from PySide2.QtCore import QTimer
-        from PySide2.QtWidgets import QApplication
+        try:
+            from PySide6.QtCore import QTimer
+        except ImportError:
+            from PySide2.QtCore import QTimer
 
         _timer = QTimer()
         _timer.setInterval(TIMER_INTERVAL_MS)
@@ -246,9 +208,9 @@ def _start_main_thread_timer():
         print(f"[3dsMaxMCP] 主线程定时器已启动 (间隔 {TIMER_INTERVAL_MS}ms)")
         return True
 
-    except ImportError as e:
+    except Exception as e:
         print(f"[3dsMaxMCP] 警告: 无法导入 PySide2/pymxs ({e})")
-        print(f"[3dsMaxMCP] 回退到后台线程直接执行模式 (pymxs 将不可用)")
+        print("[3dsMaxMCP] 不会在非 3ds Max 进程执行脚本")
         return False
 
 
@@ -285,39 +247,37 @@ def _handle_client(conn: socket.socket, addr: tuple):
     try:
         print(f"[3dsMaxMCP] 客户端已连接: {addr}")
 
-        # 接收 Python 脚本
-        script = _recv_all(conn)
+        # Send identity before accepting executable code. Maya's listener does
+        # not send this greeting, so our client cannot send scripts to Maya.
+        conn.settimeout(HANDSHAKE_TIMEOUT)
+        conn.sendall(SERVER_HELLO)
+        if recv_exact(conn, len(CLIENT_HELLO)) != CLIENT_HELLO:
+            print(f"[3dsMaxMCP] 已拒绝非 3dsMaxMCP 客户端: {addr}")
+            return
+        conn.settimeout(TASK_TIMEOUT + 10)
+        script = read_frame(conn)
         if not script:
             print(f"[3dsMaxMCP] 收到空脚本，跳过")
-            conn.sendall(_pack_message(''))
+            write_frame(conn, '')
             return
 
         print(f"[3dsMaxMCP] 收到脚本 ({len(script)} 字符)")
 
-        if _use_main_thread:
-            # 方案A: 投递到主线程队列执行
-            result_event = threading.Event()
-            result_holder = []
-
-            _task_queue.put((script, result_event, result_holder))
-            print(f"[3dsMaxMCP] 已投递到主线程队列，等待执行...")
-
-            # 等待主线程执行完成
-            if result_event.wait(timeout=TASK_TIMEOUT):
-                result = result_holder[0] if result_holder else ''
-            else:
-                result = json.dumps({
-                    'success': False,
-                    'message': f'主线程执行超时 ({TASK_TIMEOUT}秒)'
-                }, ensure_ascii=False)
-                print(f"[3dsMaxMCP] 警告: 主线程执行超时!")
+        result_event = threading.Event()
+        result_holder = []
+        _task_queue.put((script, result_event, result_holder))
+        print("[3dsMaxMCP] 已投递到主线程队列，等待执行...")
+        if result_event.wait(timeout=TASK_TIMEOUT):
+            result = result_holder[0] if result_holder else ''
         else:
-            # 回退: 直接在后台线程执行 (pymxs 不可用)
-            print(f"[3dsMaxMCP] 在后台线程直接执行...")
-            result = _execute_python(script)
+            result = json.dumps({
+                'success': False,
+                'message': f'主线程执行超时 ({TASK_TIMEOUT}秒)'
+            }, ensure_ascii=False)
+            print("[3dsMaxMCP] 警告: 主线程执行超时!")
 
         # 发送结果
-        conn.sendall(_pack_message(result))
+        write_frame(conn, result)
         print(f"[3dsMaxMCP] 结果已发送 ({len(result)} 字符)")
 
     except ConnectionError as e:
@@ -330,30 +290,21 @@ def _handle_client(conn: socket.socket, addr: tuple):
                 'success': False,
                 'message': f'服务端处理出错: {str(e)}'
             }, ensure_ascii=False)
-            conn.sendall(_pack_message(error_msg))
+            write_frame(conn, error_msg)
         except Exception:
             pass
     finally:
         conn.close()
 
 
-def _server_loop():
+def _server_loop(server_socket):
     """服务器主循环，监听并处理客户端连接。"""
     global _server_running, _server_socket
 
-    _server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    _server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    _server_socket.settimeout(1.0)
-
     try:
-        _server_socket.bind((HOST, PORT))
-        _server_socket.listen(5)
-        print(f"[3dsMaxMCP] Socket Server 已启动，监听 {HOST}:{PORT}")
-        print(f"[3dsMaxMCP] 等待 MCP Server 连接...")
-
         while _server_running:
             try:
-                conn, addr = _server_socket.accept()
+                conn, addr = server_socket.accept()
                 # 在独立线程中处理客户端连接
                 # 脚本执行会被投递到主线程队列
                 client_thread = threading.Thread(
@@ -371,15 +322,22 @@ def _server_loop():
         print(f"[3dsMaxMCP] 服务器错误: {e}")
         traceback.print_exc()
     finally:
-        if _server_socket:
-            _server_socket.close()
+        server_socket.close()
+        if _server_socket is server_socket:
             _server_socket = None
+            _server_running = False
         print("[3dsMaxMCP] Socket Server 已停止")
 
 
 # ============================================================
 # 公共 API
 # ============================================================
+def is_running():
+    """Report this listener's state, rather than merely probing the port."""
+    return bool(_server_running and _server_socket and _server_thread and
+                _server_thread.is_alive())
+
+
 def start_mcp_server(host: str = HOST, port: int = PORT):
     """启动 MCP Socket Server。
 
@@ -388,30 +346,45 @@ def start_mcp_server(host: str = HOST, port: int = PORT):
 
     Args:
         host: 监听地址，默认 127.0.0.1
-        port: 监听端口，默认 50007
+        port: 监听端口，默认 50012
     """
-    global _server_running, _server_thread, _use_main_thread, HOST, PORT
+    global _server_running, _server_thread, _server_socket, _use_main_thread, HOST, PORT
 
-    if _server_running:
+    if is_running():
         print("[3dsMaxMCP] 服务器已在运行中")
-        return
+        return True
+    if _server_running:
+        stop_mcp_server()
 
     HOST = host
     PORT = port
 
-    # 尝试启动主线程定时器
+    # Never execute Max scripts from a foreign DCC or a worker thread.
     _use_main_thread = _start_main_thread_timer()
+    if not _use_main_thread:
+        return False
 
-    if _use_main_thread:
-        print("[3dsMaxMCP] 模式: 主线程执行 (pymxs 可用)")
-    else:
-        print("[3dsMaxMCP] 模式: 后台线程执行 (pymxs 不可用)")
-
-    # 启动后台 Socket Server 线程
-    _server_running = True
-    _server_thread = threading.Thread(target=_server_loop, daemon=True)
-    _server_thread.start()
-    print(f"[3dsMaxMCP] 服务器启动中... (host={host}, port={port})")
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        server_socket.bind((host, port))
+        server_socket.listen(5)
+        server_socket.settimeout(0.5)
+        _server_socket = server_socket
+        _server_running = True
+        _server_thread = threading.Thread(target=_server_loop,
+                                          args=(server_socket,), daemon=True)
+        _server_thread.start()
+        print(f"[3dsMaxMCP] 已启动，监听 {host}:{port}")
+        return True
+    except Exception as e:
+        server_socket.close()
+        _server_socket = None
+        _server_running = False
+        _stop_main_thread_timer()
+        print(f"[3dsMaxMCP] 启动失败：无法监听 {host}:{port} ({e})")
+        return False
 
 
 def stop_mcp_server():
@@ -420,7 +393,7 @@ def stop_mcp_server():
 
     if not _server_running:
         print("[3dsMaxMCP] 服务器未在运行")
-        return
+        return True
 
     _server_running = False
     _use_main_thread = False
@@ -434,6 +407,7 @@ def stop_mcp_server():
             _server_socket.close()
         except Exception:
             pass
+        _server_socket = None
 
     if _server_thread:
         _server_thread.join(timeout=5)
@@ -448,6 +422,7 @@ def stop_mcp_server():
             break
 
     print("[3dsMaxMCP] 服务器已停止")
+    return True
 
 
 def restart_mcp_server(host: str = HOST, port: int = PORT):
@@ -458,13 +433,11 @@ def restart_mcp_server(host: str = HOST, port: int = PORT):
         port: 监听端口
     """
     stop_mcp_server()
-    import time
-    time.sleep(0.5)
-    start_mcp_server(host, port)
+    return start_mcp_server(host, port)
 
 
 # ============================================================
 # 自动启动
 # ============================================================
-if __name__ == '__main__' or True:
+if __name__ == '__main__':
     start_mcp_server()

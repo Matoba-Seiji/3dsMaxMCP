@@ -32,7 +32,7 @@ from max_mcp.log import LogManager, log_file
 
 logger = LogManager.get_logger('3dsMaxMCPServer', __file__, log_file)
 
-__version__ = "0.1.0"  # 注意：修改版本号时需同步更新 pyproject.toml 和 __init__.py
+__version__ = "0.2.0"  # 注意：修改版本号时需同步更新 pyproject.toml 和 __init__.py
 
 _operation_manager = None
 
@@ -172,7 +172,7 @@ def main():
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
         try:
-            max_conn = MaxConnection('127.0.0.1', 50007)
+            max_conn = MaxConnection()
             python_script = load_max_tool_source(name, path, arguments)
             results = max_conn.run_python_script(python_script)
             converted_results = convert_to_content(results)

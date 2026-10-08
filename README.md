@@ -1,204 +1,71 @@
-<p align="center">
-  <h1 align="center">🎮 3dsmax-mcp</h1>
-  <p align="center">通过 <a href="https://modelcontextprotocol.io/">Model Context Protocol (MCP)</a> 让 AI 控制 Autodesk 3ds Max</p>
-  <p align="center">
-    <a href="https://github.com/317431629/3dsMaxMCP">GitHub</a> · 
-    <a href="https://pypi.org/project/3dsmax-mcp/">PyPI</a> · 
-    <a href="#-快速开始">快速开始</a> · 
-    <a href="#-工具参考">工具参考</a>
-  </p>
-</p>
+# 3dsMaxMCP
 
----
+通过 MCP 控制 Autodesk 3ds Max 2023 和 2025。安装后，3ds Max 顶部会出现 **3dsMax MCP** 菜单，包含“启动服务”“停止服务”“重启服务”“查看状态”。
 
-## 📖 简介
+## 工作方式
 
-**3dsmax-mcp** 是一个 MCP（Model Context Protocol）服务器，它在 AI 助手（如 Claude Desktop、Cursor、Windsurf 等）和 Autodesk 3ds Max 之间架起桥梁。
-
-通过自然语言对话，你可以让 AI 直接操控 3ds Max —— 创建模型、设置材质、调整灯光、制作动画，甚至执行自定义脚本，无需手动编写任何代码。
-
-### 工作原理
-
-```
-┌──────────────┐     MCP协议     ┌──────────────┐    TCP Socket    ┌──────────────┐
-│  MCP 客户端   │ ◄────────────► │  3dsmax-mcp  │ ◄──────────────► │   3ds Max    │
-│ (Claude 等)  │    stdio 通道   │  (MCP Server) │   127.0.0.1     │  (监听脚本)   │
-└──────────────┘                └──────────────┘    :50007         └──────────────┘
+```text
+Codex 等 MCP 客户端 --stdio--> max_mcp --身份握手/TCP 127.0.0.1:50012--> 3ds Max
+MayaMCP 保持独立，默认使用 127.0.0.1:50011。
 ```
 
-1. **MCP 客户端**（如 Claude Desktop）通过 MCP 协议与 `3dsmax-mcp` 服务器通信
-2. **3dsmax-mcp** 将 AI 的指令转换为 Python 脚本
-3. 通过 **TCP Socket**（端口 50007）发送到 3ds Max 中的监听脚本执行
-4. 执行结果原路返回给 AI 助手
+Max 客户端会先核对监听器的 `3DSMAXMCP/1` 身份标记，**核对通过后才发送 Python 脚本**。Max 监听器也核对客户端标记；旧式 Maya 客户端即使误连 Max 端口也不会执行脚本。端口绑定发生在启动成功提示之前，端口被占用会直接报错。
 
----
+## 安装
 
-## 📋 系统要求
+要求：Windows、3ds Max 2023 或 2025，以及用于外部 MCP 进程的 Python 3.10+。Max 内嵌 Python 不需要安装外部 `mcp` 包。
 
-| 项目 | 要求 |
-|------|------|
-| **操作系统** | Windows（3ds Max 仅支持 Windows） |
-| **Python** | >= 3.10 |
-| **3ds Max** | 需支持 Python 3 脚本（推荐 2022 及以上版本） |
-| **网络** | 3ds Max 与 MCP Server 需在同一台机器上运行 |
-| **MCP 客户端** | Claude Desktop / Cursor / Windsurf / 或其他支持 MCP 的客户端 |
+在本仓库运行：
 
----
-
-## 🚀 快速开始
-
-整个安装只需 **两步**：配置 3ds Max 端的监听脚本，然后配置 MCP 客户端。
-
-### 第一步：在 3ds Max 中启动监听
-
-你需要让 3ds Max 运行一个 Socket 监听脚本，这样 MCP Server 才能与之通信。
-
-#### 方式 A：自动启动（推荐）
-
-将项目中的 `startup_mcp_listener.ms` 文件复制到 3ds Max 的启动脚本目录：
-
-```
-C:\Users\<你的用户名>\AppData\Local\Autodesk\3dsMax\<版本号>\ENU\scripts\startup\
+```powershell
+uv sync
+uv run --no-sync python install.py
 ```
 
-> 💡 **提示**：放入该目录后，每次启动 3ds Max 会自动运行监听脚本，无需手动操作。
+安装器将当前源码复制到本用户的 `%APPDATA%\Autodesk\ApplicationPlugins\3dsMaxMCP.bundle`。**重新启动 3ds Max** 后，在顶部菜单选择“3dsMax MCP > 启动服务”，然后可用“查看状态”核实状态。2023 使用旧版 `menuMan`，2025 使用 `cuiRegisterMenus`；插件清单按版本加载对应入口。
 
-#### 方式 B：手动启动
-
-在 3ds Max 中执行以下任一操作：
-
-- **菜单方式**：`Scripting` → `Run Script` → 选择 `startup_mcp_listener.ms` 文件
-- **拖拽方式**：将 `startup_mcp_listener.ms` 直接拖拽到 3ds Max 视口中
-- **监听器方式**：在 MAXScript Listener 中输入：
+若只需手动启动，也可在 MAXScript Listener 运行：
 
 ```maxscript
 fileIn @"C:\你的路径\3dsMaxMCP\startup_mcp_listener.ms"
 ```
 
-> ✅ 启动成功后，MAXScript Listener 中会显示：`[3dsMaxMCP] MCP Socket Server 启动命令已发送`
+手动启动的成功标志是 `[3dsMaxMCP] 已启动，监听 127.0.0.1:50012`。仅看到“启动脚本执行完毕”不代表端口已绑定。
 
-### 第二步：安装并配置 MCP 客户端
+卸载顶部菜单：
 
-#### 安装 3dsmax-mcp
-
-提供以下三种安装方式：
-
-**通过 pip 安装（推荐）：**
-
-```bash
-pip install 3dsmax-mcp
+```powershell
+uv run --no-sync python install.py --uninstall
 ```
 
-**通过 uvx 运行（免安装）：**
+## 配置 Codex
 
-```bash
-uvx 3dsmax-mcp
+在用户级 `~/.codex/config.toml` 中加入（把路径改成你的仓库绝对路径；`python.exe` 来自 `uv sync` 创建的虚拟环境）：
+
+```toml
+[mcp_servers."3dsmax-mcp"]
+command = "C:/你的路径/3dsMaxMCP/.venv/Scripts/python.exe"
+args = ["-m", "max_mcp"]
+cwd = "C:/你的路径/3dsMaxMCP"
+enabled = true
 ```
 
-**从源码安装（开发者）：**
+用 `codex mcp list` 检查登记项；配置更改后新开 Codex 聊天以加载工具。请运行**本仓库**的 MCP 服务端；已发布到 PyPI 的旧版本仍使用旧端口和旧协议，不能与此监听器混用。
 
-```bash
-git clone https://github.com/317431629/3dsMaxMCP.git
-cd 3dsMaxMCP
-pip install -e .
-```
+## 故障排查与验证
 
-#### 配置 MCP 客户端
+- Max 菜单的“查看状态”查询当前监听器自身状态，不通过“端口开放”猜测。
+- 若“启动服务”报端口占用，检查 `Get-NetTCPConnection -LocalPort 50012` 的进程归属；不要停止或重配 MayaMCP 来绕过问题。
+- 连接器若提示“不是 3dsMaxMCP”，表示目标端口被其他进程占用；连接器尚未发送 Python 脚本。
+- 菜单安装包需重启 Max 才会加载；安装器不会关闭正在运行的 Max 或更改场景。
 
-<details>
-<summary><b>🤖 Claude Desktop</b></summary>
-
-编辑配置文件（通常位于 `%APPDATA%\Claude\claude_desktop_config.json`）：
-
-```json
-{
-    "mcpServers": {
-        "3dsmax-mcp": {
-            "command": "uvx",
-            "args": ["3dsmax-mcp"]
-        }
-    }
-}
-```
-
-如果使用 pip 安装：
-
-```json
-{
-    "mcpServers": {
-        "3dsmax-mcp": {
-            "command": "3dsmax-mcp"
-        }
-    }
-}
-```
-
-</details>
-
-<details>
-<summary><b>✏️ Cursor</b></summary>
-
-在 Cursor 的 Settings → MCP 中添加：
-
-```json
-{
-    "mcpServers": {
-        "3dsmax-mcp": {
-            "command": "uvx",
-            "args": ["3dsmax-mcp"]
-        }
-    }
-}
-```
-
-或使用 pip 安装后：
-
-```json
-{
-    "mcpServers": {
-        "3dsmax-mcp": {
-            "command": "3dsmax-mcp"
-        }
-    }
-}
-```
-
-</details>
-
-<details>
-<summary><b>🛠️ 从源码运行</b></summary>
-
-如果你是从源码克隆的项目：
-
-```json
-{
-    "mcpServers": {
-        "3dsmax-mcp": {
-            "command": "python",
-            "args": ["-m", "max_mcp"],
-            "cwd": "C:/你的路径/3dsMaxMCP"
-        }
-    }
-}
-```
-
-</details>
-
-### 第三步：开始使用 🎉
-
-确保 3ds Max 已启动且监听脚本正在运行，然后在 MCP 客户端中用自然语言对话即可：
-
-- *"在场景中创建一个球体，半径为 30"*
-- *"把 Box001 移动到坐标 (100, 0, 50)"*
-- *"给选中的对象创建一个红色金属材质"*
-- *"在第 0 帧和第 60 帧之间为球体做一个位移动画"*
-- *"保存当前场景到桌面"*
+MCP 工具包含任意 Python/MAXScript 执行能力，因此监听器只绑定本机 `127.0.0.1`。身份标记用于防止误连其他 DCC，不能代替恶意客户端鉴权。
 
 ---
 
 ## 🔧 工具参考
 
-3dsmax-mcp 提供了 **25 个工具**，覆盖 3ds Max 的常用操作。以下是完整的工具列表和说明。
+3dsmax-mcp 提供了 **24 个工具**，覆盖 3ds Max 的常用操作。以下是完整的工具列表和说明。
 
 ### 🎬 场景管理（Scene）
 
@@ -314,8 +181,8 @@ AI 会调用：
 请依次检查：
 
 1. **3ds Max 是否正在运行？** —— 必须先启动 3ds Max
-2. **监听脚本是否已执行？** —— 检查 MAXScript Listener 中是否有 `[3dsMaxMCP] MCP Socket Server 启动命令已发送` 的提示
-3. **端口是否被占用？** —— 默认使用端口 `50007`，确保没有其他程序占用
+2. **监听器是否实际绑定？** —— 菜单选择“查看状态”，或检查 MAXScript Listener 是否显示 `[3dsMaxMCP] 已启动，监听 127.0.0.1:50012`
+3. **端口是否被占用？** —— 默认使用端口 `50012`，确保没有其他程序占用
 4. **防火墙设置** —— 某些安全软件可能阻止本地 Socket 通信，请添加例外
 
 </details>
@@ -323,7 +190,7 @@ AI 会调用：
 <details>
 <summary><b>Q: 执行超时怎么办？</b></summary>
 
-默认 Socket 超时时间为 60 秒。如果你的操作需要更长时间（如复杂渲染或大场景处理），可能会超时。建议：
+主线程执行上限为 120 秒，客户端等待上限为 130 秒。如果操作需要更长时间，建议：
 
 - 将复杂操作拆分为多个简单步骤
 - 避免在 MCP 工具中执行渲染等耗时操作
@@ -333,9 +200,9 @@ AI 会调用：
 ### 安装问题
 
 <details>
-<summary><b>Q: uvx 命令找不到怎么办？</b></summary>
+<summary><b>Q: uv 命令找不到怎么办？</b></summary>
 
-`uvx` 是 [uv](https://github.com/astral-sh/uv) 工具的一部分。安装方法：
+`uv` 是项目依赖管理工具。安装方法：
 
 ```bash
 # Windows (PowerShell)
@@ -350,7 +217,7 @@ pip install uv
 <details>
 <summary><b>Q: 支持哪些版本的 3ds Max？</b></summary>
 
-理论上支持所有内置 Python 3 的 3ds Max 版本（2022 及以上）。推荐使用 **3ds Max 2024** 及以上版本，Python 环境更稳定。
+菜单安装包明确支持并分别适配 **3ds Max 2023 和 2025**。其他版本尚未验证。
 
 </details>
 
@@ -359,7 +226,7 @@ pip install uv
 <details>
 <summary><b>Q: 可以同时控制多个 3ds Max 实例吗？</b></summary>
 
-当前版本默认连接 `127.0.0.1:50007`，仅支持单实例。如需多实例支持，需要修改监听端口配置。
+当前版本默认连接 `127.0.0.1:50012`，仅支持单实例。如需多实例支持，需要修改监听端口配置。
 
 </details>
 
@@ -384,7 +251,9 @@ pip install uv
 │   ├── log.py                      # 日志管理
 │   ├── connector/                  # 通信层
 │   │   ├── max_connection.py       # MCP Server → 3ds Max 的 TCP 客户端
-│   │   └── max_server_listener.py  # 3ds Max 端的 TCP 监听服务（在 Max 内运行）
+│   │   ├── max_server_listener.py  # 3ds Max 端的 TCP 监听服务
+│   │   └── protocol.py             # 身份握手与消息帧协议
+│   ├── ui/                         # 菜单操作入口
 │   ├── max_tools/                  # 所有 MCP 工具脚本
 │   │   ├── scene/                  # 场景相关工具（7个）
 │   │   ├── object/                 # 对象操作工具（9个）
@@ -393,7 +262,9 @@ pip install uv
 │   │   ├── animation/              # 动画工具（2个）
 │   │   └── utils/                  # 通用工具（3个）
 │   └── utils/                      # 内部工具函数
-├── startup_mcp_listener.ms         # 3ds Max 启动脚本（MAXScript）
+├── bundle/                          # 2023/2025 顶部菜单插件包
+├── install.py                       # 用户级菜单安装器
+├── startup_mcp_listener.ms          # 手动启动入口
 ├── pyproject.toml                  # Python 包配置
 ├── LICENSE                         # MIT 许可证
 └── README.md                       # 本文件
@@ -404,3 +275,5 @@ pip install uv
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 开源许可。
+
+本仓库基于 [317431629/3dsMaxMCP](https://github.com/317431629/3dsMaxMCP) 开发，保留原项目的许可证和 Git 历史。新增的菜单安装流程参考了 [Matoba-Seiji/MayaMCP](https://github.com/Matoba-Seiji/MayaMCP)，并为 3ds Max 2023、2025 分别适配顶部菜单与独立通信协议。
