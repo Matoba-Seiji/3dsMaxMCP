@@ -140,6 +140,17 @@ class MaxConnection(object):
             if client is not None:
                 client.close()
 
+    def get_python_major_version(self) -> int:
+        """Read the embedded Max Python major version using a safe probe."""
+        result = self.run_python_script(
+            "import sys\n_mcp_max_results = int(sys.version_info[0])"
+        )
+        if isinstance(result, bool) or not isinstance(result, int):
+            raise RuntimeError(
+                "3ds Max returned an invalid embedded Python version: %r" % (result,)
+            )
+        return result
+
     def run_python_script(self, python_script: str, *, returns: ScriptReturn = ScriptReturn.JSON):
         """执行 Python 脚本并按指定返回类型处理结果。
 

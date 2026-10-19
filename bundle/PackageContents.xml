@@ -6,6 +6,11 @@
                     UpgradeCode="{7A7CB078-0ADF-46EF-BE8D-A27329D32E79}">
   <CompanyDetails />
   <Components Description="post-start-up scripts parts">
+    <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2020" SeriesMax="2020" />
+    <ComponentEntry AppName="3dsMaxMCP2020" Version="0.2.0"
+                    ModuleName="./Contents/scripts/menu_2020.ms" />
+  </Components>
+  <Components Description="post-start-up scripts parts">
     <RuntimeRequirements OS="Win64" Platform="3ds Max" SeriesMin="2023" SeriesMax="2023" />
     <ComponentEntry AppName="3dsMaxMCP2023" Version="0.2.0"
                     ModuleName="./Contents/scripts/menu_2023.ms" />

@@ -1,6 +1,6 @@
 # 3dsMaxMCP
 
-通过 MCP 在 Codex 等客户端中操作 3ds Max。支持 **Windows 上的 3ds Max 2023 和 2025**；可读取场景、创建和修改对象、设置材质与动画，也可执行 MAXScript 或 Python 脚本。
+通过 MCP 在 Codex 等客户端中操作 3ds Max。支持 **Windows 上的 3ds Max 2020、2023 和 2025**；可读取场景、创建和修改对象、设置材质与动画，也可执行 MAXScript 或 Python 脚本。
 
 ## 安装
 
@@ -11,7 +11,7 @@ uv sync
 uv run --no-sync python install.py
 ```
 
-重启 3ds Max，在顶部 **3dsMax MCP → 启动服务**。可用同一菜单的 **查看状态** 确认服务已启动。
+重启 3ds Max，在顶部 **3dsMax MCP → 启动服务**。可用同一菜单的 **查看状态** 确认服务已启动。Max 2020 嵌入 Python 2.7；服务器会转换仓库内 24 个 MCP 工具脚本以及受支持的用户脚本语法。Python 3 专属语法和 API 不在转换范围内。
 
 ## 配置 Codex
 
@@ -30,7 +30,7 @@ enabled = true
 ## 常见问题
 
 - **连接失败：**确认 3ds Max 正在运行，并在 **3dsMax MCP → 查看状态** 中检查服务。若端口 `50012` 被占用，关闭占用该端口的程序后重试。
-- **没有顶部菜单：**重新运行安装命令并重启 3ds Max。安装器将菜单文件放在 `%APPDATA%\Autodesk\ApplicationPlugins\3dsMaxMCP.bundle`。
+- **没有顶部菜单：**重新运行安装命令并重启 3ds Max 2020、2023 或 2025。安装器将菜单文件放在 `%APPDATA%\Autodesk\ApplicationPlugins\3dsMaxMCP.bundle`。
 - **卸载菜单：**运行 `uv run --no-sync python install.py --uninstall`。
 
 ## 许可与来源

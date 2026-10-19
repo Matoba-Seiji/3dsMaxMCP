@@ -27,6 +27,9 @@ import pydantic_core
 
 # Import local modules
 from max_mcp.connector.max_connection import MaxConnection
+from max_mcp.python2_compat import (
+    transpile_python2_source, transpile_user_python2_source,
+)
 from max_mcp.OperationManager import OperationsManager
 from max_mcp.log import LogManager, log_file
 
@@ -105,6 +108,46 @@ def _mcp_max_scope({','.join(args)}):
     import traceback
     from pprint import pprint
     _add_root_dir_to_env()
+    try:
+        _mcp_text_type = unicode
+        _mcp_byte_type = str
+        _mcp_string_types = (str, unicode)
+    except NameError:
+        _mcp_text_type = str
+        _mcp_byte_type = bytes
+        _mcp_string_types = (str,)
+
+    def _mcp_decode_bytes(value):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                return value.decode("mbcs")
+            except (LookupError, UnicodeDecodeError):
+                return value.decode("utf-8", "replace")
+
+    def _mcp_to_text(value):
+        if isinstance(value, _mcp_text_type):
+            return value
+        if isinstance(value, _mcp_byte_type):
+            return _mcp_decode_bytes(value)
+        return value
+
+    def _mcp_text(value):
+        value = _mcp_to_text(value)
+        try:
+            return _mcp_text_type(value)
+        except UnicodeDecodeError:
+            raw_value = value if isinstance(value, _mcp_byte_type) else str(value)
+            return _mcp_decode_bytes(raw_value)
+
+    def _mcp_fstring(template, *values):
+        template = _mcp_to_text(template)
+        values = tuple(_mcp_to_text(value) for value in values)
+        return template.format(*values)
+
+    def _mcp_ascii(value):
+        return _mcp_text(value).encode("ascii", "backslashreplace").decode("ascii")
 {spaced_python_script}
     try:
         results = {max_tool_name}({','.join([a + '=' + a for a in args])})
@@ -113,7 +156,7 @@ def _mcp_max_scope({','.join(args)}):
         traceback.print_exc()
         results = dict([('success', False), ('message', 'Error: 3ds Max tool failed with the follow message: ' + str(e))])
 
-    if results and not isinstance(results, str):
+    if results and not isinstance(results, _mcp_string_types):
         try:
             results = json.dumps(results)
         except Exception as e:
@@ -125,26 +168,68 @@ def _mcp_max_scope({','.join(args)}):
 """
 
 
-def load_max_tool_source(max_tool_name: str, filename: str, args: Dict[str, List[str]] = None, *, log: bool = False) -> str:
-    """读取工具脚本并生成可执行的 3ds Max Python 调用脚本。"""
-    with open(filename, 'r', encoding='utf-8') as f:
+def _serialize_python_argument(value, target_python_major=None):
+    """Serialize JSON-like MCP arguments as safe Python source literals."""
+    if target_python_major != 2:
+        return repr(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return "u" + json.dumps(value, ensure_ascii=True)
+    if isinstance(value, list):
+        return "[" + ", ".join(
+            _serialize_python_argument(item, 2) for item in value
+        ) + "]"
+    if isinstance(value, tuple):
+        items = [_serialize_python_argument(item, 2) for item in value]
+        suffix = "," if len(items) == 1 else ""
+        return "(" + ", ".join(items) + suffix + ")"
+    if isinstance(value, dict):
+        pairs = [
+            "%s: %s" % (
+                _serialize_python_argument(key, 2),
+                _serialize_python_argument(item, 2),
+            )
+            for key, item in value.items()
+        ]
+        return "{" + ", ".join(pairs) + "}"
+    return repr(value)
+
+
+def load_max_tool_source(
+    max_tool_name: str,
+    filename: str,
+    args: Dict[str, List[str]] = None,
+    *,
+    target_python_major: int = None,
+    log: bool = False,
+) -> str:
+    """Read a tool and generate a Max-side script for its Python version."""
+    with open(filename, "r", encoding="utf-8") as f:
         script = f.read()
-    # add in function call to the results
+    args = dict(args or {})
+    if target_python_major == 2:
+        script = transpile_python2_source(script, filename)
+        if max_tool_name == "execute_python_script":
+            user_script = args.get("script")
+            if isinstance(user_script, str):
+                args["script"] = transpile_user_python2_source(user_script)
+
     results = wrap_script_in_scoped_function(script, max_tool_name, args.keys())
-    results += f"\n_mcp_max_results = _mcp_max_scope("
+    results += "\n_mcp_max_results = _mcp_max_scope("
     params = []
-    for k, v in args.items():
-        if isinstance(v, str):
-            # 使用三引号包裹字符串参数，以支持多行字符串和包含引号的内容
-            params.append(f"{k}='''{v}'''")
-        else:
-            params.append(f"{k}={v}")
-    results += ','.join(params)
+    for key, value in args.items():
+        params.append(
+            "%s=%s" % (
+                key,
+                _serialize_python_argument(value, target_python_major),
+            )
+        )
+    results += ", ".join(params)
     results += ")\n\n"
 
     if log:
         logger.debug(results)
-
     return results
 
 
@@ -173,7 +258,10 @@ def main():
             return {"success": False, "message": error_msg}
         try:
             max_conn = MaxConnection()
-            python_script = load_max_tool_source(name, path, arguments)
+            python_major = max_conn.get_python_major_version()
+            python_script = load_max_tool_source(
+                name, path, arguments, target_python_major=python_major
+            )
             results = max_conn.run_python_script(python_script)
             converted_results = convert_to_content(results)
         except Exception as e:

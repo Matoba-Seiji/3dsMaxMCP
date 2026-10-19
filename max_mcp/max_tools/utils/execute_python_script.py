@@ -44,8 +44,27 @@ def execute_python_script(script: str) -> dict:
 
     try:
         # 创建一个独立的命名空间来执行脚本，避免污染全局作用域
-        exec_namespace = {}
-        exec(script, exec_namespace)
+        # User scripts translated for Max 2020 call these wrapper helpers.
+        exec_namespace = {
+            "_mcp_text": _mcp_text,
+            "_mcp_fstring": _mcp_fstring,
+            "_mcp_ascii": _mcp_ascii,
+            "_mcp_string_types": _mcp_string_types,
+        }
+        try:
+            is_unicode = isinstance(script, unicode)
+        except NameError:
+            is_unicode = isinstance(script, str)
+        if is_unicode:
+            script_bytes = script.encode("utf-8")
+        else:
+            script_bytes = script
+        if not script_bytes.startswith(b"# -*- coding: utf-8 -*-"):
+            script_bytes = b"# -*- coding: utf-8 -*-\n" + script_bytes
+        script_code = compile(
+            script_bytes, "<3dsMaxMCP user script>", "exec"
+        )
+        eval(script_code, exec_namespace, exec_namespace)
 
         # 尝试从执行命名空间中获取返回结果
         if '_mcp_max_results' in exec_namespace:

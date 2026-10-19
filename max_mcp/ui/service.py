@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Actions used by the 3ds Max top-level MCP menu."""
 
 from max_mcp.connector import max_server_listener as listener

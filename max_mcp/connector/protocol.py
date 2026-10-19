@@ -15,6 +15,19 @@ CLIENT_HELLO = b"3DSMAXMCP-CLIENT/1\n"
 HANDSHAKE_TIMEOUT = 3.0
 MAX_MESSAGE_SIZE = 8 * 1024 * 1024
 
+try:
+    ConnectionError = ConnectionError
+except NameError:
+    class ConnectionError(socket.error):
+        pass
+
+try:
+    _TEXT_TYPE = unicode
+    _BINARY_TYPE = str
+except NameError:
+    _TEXT_TYPE = str
+    _BINARY_TYPE = bytes
+
 
 def recv_exact(connection, length):
     data = bytearray()
@@ -23,7 +36,7 @@ def recv_exact(connection, length):
         if not chunk:
             raise ConnectionError("Socket closed before the message was complete")
         data.extend(chunk)
-    return bytes(data)
+    return _BINARY_TYPE(data)
 
 
 def read_frame(connection):
@@ -34,7 +47,12 @@ def read_frame(connection):
 
 
 def write_frame(connection, message):
-    payload = message.encode("utf-8")
+    if isinstance(message, _BINARY_TYPE):
+        payload = message
+    elif isinstance(message, _TEXT_TYPE):
+        payload = message.encode("utf-8")
+    else:
+        payload = _TEXT_TYPE(message).encode("utf-8")
     if len(payload) > MAX_MESSAGE_SIZE:
         raise ValueError("MCP message exceeds the maximum allowed size")
     connection.sendall(struct.pack(">I", len(payload)) + payload)

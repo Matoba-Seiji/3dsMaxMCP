@@ -1,4 +1,4 @@
-"""Install the 3ds Max 2023/2025 menu for the current Windows user.
+"""Install the 3ds Max 2020/2023/2025 menu for the current Windows user.
 
 The external Codex/Claude MCP process still runs from this repository. The
 installed Autodesk bundle contains only the in-Max bridge and menu actions.
@@ -58,7 +58,7 @@ def install():
     if not _is_our_bundle(destination):
         raise RuntimeError("Installed bundle failed manifest validation")
     print("Installed 3dsMaxMCP menu: %s" % destination)
-    print("Restart 3ds Max 2023 or 2025 to load the top menu.")
+    print("Restart 3ds Max 2020, 2023, or 2025 to load the top menu.")
     return destination
 
 
