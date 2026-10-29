@@ -27,6 +27,50 @@ enabled = true
 
 重新打开 Codex 聊天，让 MCP 工具加载。Max 默认使用本机端口 `50012`，与 [MayaMCP](https://github.com/Matoba-Seiji/MayaMCP) 的 `50011` 分开。
 
+## 多实例（同时打开多个 3ds Max）
+
+每个 3ds Max 进程各自运行监听器，用不同端口隔离；MCP 客户端按端口连接对应实例，互不影响：
+
+1. 第一个 Max：菜单 **3dsMax MCP → 启动服务（实例1 · 50012）**。
+2. 第二个 Max：菜单 **3dsMax MCP → 启动服务（实例2 · 50013）**。
+3. 客户端为每个实例各配置一条 stdio 服务器，用 `--port` 指定端口（任何 MCP 客户端通用）：
+
+```toml
+[mcp_servers."3dsmax-1"]
+command = "C:/你的路径/3dsMaxMCP/.venv/Scripts/python.exe"
+args = ["-m", "max_mcp", "--port", "50012"]
+cwd = "C:/你的路径/3dsMaxMCP"
+
+[mcp_servers."3dsmax-2"]
+command = "C:/你的路径/3dsMaxMCP/.venv/Scripts/python.exe"
+args = ["-m", "max_mcp", "--port", "50013"]
+cwd = "C:/你的路径/3dsMaxMCP"
+```
+
+也可以不传 `--port`，改用环境变量 `MAXMCP_PORT=50013`（默认 `50012` 不变，旧配置无需修改）。客户端条目的服务名不同，工具分别显示为 `mcp__3dsmax-1__*` / `mcp__3dsmax-2__*`；两个实例的 Python 状态完全独立，调用只会发往对应端口的 Max。
+
+使用 `mcpServers` JSON 格式的客户端（Claude Desktop、Cursor 等）等价写法：
+
+```json
+{
+  "mcpServers": {
+    "3dsmax-1": {
+      "command": "C:/你的路径/3dsMaxMCP/.venv/Scripts/python.exe",
+      "args": ["-m", "max_mcp", "--port", "50012"],
+      "cwd": "C:/你的路径/3dsMaxMCP"
+    },
+    "3dsmax-2": {
+      "command": "C:/你的路径/3dsMaxMCP/.venv/Scripts/python.exe",
+      "args": ["-m", "max_mcp", "--port", "50013"],
+      "cwd": "C:/你的路径/3dsMaxMCP"
+    }
+  }
+}
+```
+
+
+注意：菜单与 `max_mcp` 代码更新后，需要重新运行 `install.py` 并重启 3ds Max，新菜单项才会出现。
+
 ## 常见问题
 
 - **连接失败：**确认 3ds Max 正在运行，并在 **3dsMax MCP → 查看状态** 中检查服务。若端口 `50012` 被占用，关闭占用该端口的程序后重试。

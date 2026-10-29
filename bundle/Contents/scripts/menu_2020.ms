@@ -3,9 +3,13 @@
     local scriptDir = getFilenamePath (getSourceFileName())
     python.ExecuteFile (scriptDir + @"bootstrap.py")
 
-    macroScript MaxMCPStart category:"3dsMaxMCP" tooltip:"启动 3ds Max MCP 服务" buttonText:"启动服务"
+    macroScript MaxMCPStart1 category:"3dsMaxMCP" tooltip:"启动 3ds Max MCP 服务（实例 1，端口 50012）" buttonText:"启动服务（实例1·50012）"
     (
-        on execute do python.Execute "import max_mcp.ui.service as service; service.start()"
+        on execute do python.Execute "import max_mcp.ui.service as service; service.start(50012)"
+    )
+    macroScript MaxMCPStart2 category:"3dsMaxMCP" tooltip:"启动 3ds Max MCP 服务（实例 2，端口 50013）" buttonText:"启动服务（实例2·50013）"
+    (
+        on execute do python.Execute "import max_mcp.ui.service as service; service.start(50013)"
     )
     macroScript MaxMCPStop category:"3dsMaxMCP" tooltip:"停止 3ds Max MCP 服务" buttonText:"停止服务"
     (
@@ -41,9 +45,9 @@
     -- Refresh our four action items so a saved English menu does not retain
     -- stale labels. Keep the stable macroScript names and category unchanged.
     for i = (menu.numItems() - 1) to 0 by -1 do menu.removeItemByPosition i
-    local actionNames = #("MaxMCPStart", "MaxMCPStop", "MaxMCPRestart", "MaxMCPStatus")
-    local actionTitles = #("启动服务", "停止服务", "重启服务", "查看状态")
-    for i = 1 to 4 do (
+    local actionNames = #("MaxMCPStart1", "MaxMCPStart2", "MaxMCPStop", "MaxMCPRestart", "MaxMCPStatus")
+    local actionTitles = #("启动服务（实例1·50012）", "启动服务（实例2·50013）", "停止服务", "重启服务", "查看状态")
+    for i = 1 to 5 do (
         local item = menuMan.createActionItem actionNames[i] "3dsMaxMCP"
         item.setTitle actionTitles[i]
         item.setUseCustomTitle true

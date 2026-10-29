@@ -26,6 +26,7 @@ from mcp.server.models import InitializationOptions
 import pydantic_core
 
 # Import local modules
+from max_mcp.connector import protocol
 from max_mcp.connector.max_connection import MaxConnection
 from max_mcp.python2_compat import (
     transpile_python2_source, transpile_user_python2_source,
@@ -233,8 +234,21 @@ def load_max_tool_source(
     return results
 
 
-def main():
-    """MCP Server 入口函数，供 uvx / 命令行 / python -m max_mcp 调用。"""
+def main(port=None, host=None):
+    """MCP Server 入口函数，供 uvx / 命令行 / python -m max_mcp 调用。
+
+    port / host 指定要连接的 3ds Max 监听器；为 None 时使用 MAXMCP_PORT
+    环境变量或默认的 50012 / 127.0.0.1。多个 3ds Max 实例各监听不同端口，
+    每个 MCP 客户端条目指向其中之一即可互不影响。
+    """
+    if host is not None:
+        protocol.HOST = host
+    if port is not None:
+        protocol.PORT = int(port)
+    logger.info(
+        "MCP bridge targeting 3ds Max listener at %s:%s"
+        % (protocol.HOST, protocol.PORT)
+    )
     server_name = "3dsMaxMCP"
     _operation_manager = OperationFactory.get_operation_manager("max")
     server = Server(server_name)

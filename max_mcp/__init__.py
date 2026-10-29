@@ -9,10 +9,10 @@
 
 __version__ = "0.2.0"
 
-def main():
+def main(port=None, host=None):
     # The in-Max bridge imports max_mcp too. Keep external MCP dependencies
     # out of Autodesk's embedded Python until the stdio entry point is used.
     from .server import main as run_server
-    return run_server()
+    return run_server(port=port, host=host)
 
 __all__ = ["main", "__version__"]

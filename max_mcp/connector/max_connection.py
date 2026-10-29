@@ -11,9 +11,11 @@ import socket
 import json
 from enum import Enum
 
-from max_mcp.connector.protocol import (
-    HOST, PORT, connect_to_max, read_frame, write_frame,
-)
+from max_mcp.connector import protocol
+from max_mcp.connector.protocol import connect_to_max, read_frame, write_frame
+
+HOST = protocol.HOST
+PORT = protocol.PORT
 
 # Import third-party modules
 
@@ -71,13 +73,13 @@ class MaxConnection(object):
 
     Attributes:
         _host: 连接地址，默认 127.0.0.1
-        _port: 连接端口，默认 50012
+        _port: 连接端口，默认取 MAXMCP_PORT 环境变量或 50012
     """
 
-    def __init__(self, host: str = HOST, port: int = PORT):
+    def __init__(self, host: str = None, port: int = None):
         super(MaxConnection, self).__init__()
-        self._host = host
-        self._port = port
+        self._host = protocol.HOST if host is None else host
+        self._port = protocol.PORT if port is None else int(port)
 
     def _send_python_command(self, python_script: str) -> str:
         """通过 Socket 将 Python 脚本发送给 3ds Max，并读取返回结果。

@@ -4,12 +4,34 @@ The greeting is sent before any executable payload. A client connected to a
 different DCC therefore cannot send Python code to that process accidentally.
 """
 
+import os
 import socket
 import struct
 
 
-HOST = "127.0.0.1"
-PORT = 50012
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 50012
+PORT_ENV_VAR = "MAXMCP_PORT"
+
+
+def _port_from_env(default=DEFAULT_PORT):
+    """Resolve the listener port: MAXMCP_PORT environment variable wins.
+
+    The external MCP server process reads this at import time; the in-Max
+    listener keeps its own default (50012) unless the environment is set.
+    """
+    raw = os.environ.get(PORT_ENV_VAR)
+    if raw is None:
+        return default
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return value if 0 < value < 65536 else default
+
+
+HOST = DEFAULT_HOST
+PORT = _port_from_env()
 SERVER_HELLO = b"3DSMAXMCP/1\n"
 CLIENT_HELLO = b"3DSMAXMCP-CLIENT/1\n"
 HANDSHAKE_TIMEOUT = 3.0
