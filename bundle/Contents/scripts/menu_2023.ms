@@ -1,6 +1,7 @@
--- 3ds Max 2023 legacy menu. Loaded after the UI is ready.
+﻿-- 3ds Max 2023 legacy menu. Loaded after the UI is ready.
 (
-    local scriptDir = getFilenamePath (getSourceFileName())
+    local appData = (dotNetClass "System.Environment").GetFolderPath (dotNetClass "System.Environment+SpecialFolder").ApplicationData
+    local scriptDir = appData + @"\Autodesk\ApplicationPlugins\3dsMaxMCP.bundle\Contents\scripts\"
     python.ExecuteFile (scriptDir + @"bootstrap.py")
 
     macroScript MaxMCPStart1 category:"3dsMaxMCP" tooltip:"启动 3ds Max MCP 服务（实例 1，端口 50012）" buttonText:"启动服务（实例1·50012）"
@@ -32,11 +33,11 @@
     if menu == undefined then (
         menuMan.registerMenuContext 0x5A4D4350
         menu = menuMan.createMenu menuTitle
-        mainBar.addItem (menuMan.createSubMenuItem menuTitle menu) (mainBar.numItems() - 1)
+        mainBar.addItem (menuMan.createSubMenuItem menuTitle menu) (mainBar.numItems() + 1)
     ) else (
         -- Rename an already registered English menu without duplicating it.
         menu.setTitle menuTitle
-        for i = 0 to (mainBar.numItems() - 1) do (
+        for i = 1 to mainBar.numItems() do (
             local item = mainBar.getItem i
             if item.getSubMenu() == menu do item.setTitle menuTitle
         )
@@ -44,14 +45,14 @@
 
     -- Refresh our action items so a saved English menu does not retain
     -- stale labels. Keep the stable macroScript names and category unchanged.
-    for i = (menu.numItems() - 1) to 0 by -1 do menu.removeItemByPosition i
+    for i = menu.numItems() to 1 by -1 do menu.removeItemByPosition i
     local actionNames = #("MaxMCPStart1", "MaxMCPStart2", "MaxMCPStop", "MaxMCPRestart", "MaxMCPStatus")
     local actionTitles = #("启动服务（实例1·50012）", "启动服务（实例2·50013）", "停止服务", "重启服务", "查看状态")
     for i = 1 to 5 do (
         local item = menuMan.createActionItem actionNames[i] "3dsMaxMCP"
         item.setTitle actionTitles[i]
         item.setUseCustomTitle true
-        menu.addItem item -1
+        menu.addItem item (menu.numItems() + 1)
     )
     menuMan.updateMenuBar()
 )
